@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 import argparse
+import time
 
 from PIL import Image
 
@@ -8,19 +9,44 @@ config = tf.ConfigProto()
 config.gpu_options.allow_growth=True
 #config.log_device_placement=True
 sess = tf.Session(config=config)
+
+
 HEIGHT=600
-WIDTH=600
+WIDTH=800
 CHANNEL=3
+nb_epoch = 2000
+alpha = 1e-4
+beta =1.
+
+VGG_MEAN = [103.939, 116.779, 123.68]
 
 def opt_parse():
     ''' args handling'''
     parser = argparse.ArgumentParser(description='Image Style Transform with vgg19 network')
     parser.add_argument('content',help='content image')
     parser.add_argument('style',help='style image')
-    parser.add_argument('output',help='output image')
+    parser.add_argument('-o','--output',default='art.jpg',help='output image')
     parser.add_argument('-v','--vgg19',default='vgg19.npy',help='vgg.npy file')
 
     return parser.parse_args()
+
+def load_rgb(img_path):
+    ''' Load RGB image then return a 4d(1,R,G,B) numpy array'''
+    im = Image.open(img_path)
+    if im.mode != 'RGB':
+        im = im.convert('RGB')
+    image = np.array(list(im.getdata()),dtype='float32') - VGG_MEAN
+    image = image.reshape(1,im.size[1],im.size[0],3)
+    return image
+
+def save_rgb(out_path,array):
+    ''' Save RGB image'''
+    array = array.reshape(array.shape[1:])
+    array = array + VGG_MEAN
+    array = np.clip(array,0,255).astype('int8')
+    im = Image.fromarray(array,'RGB')
+    im.save(out_path)
+
 
 def build_vgg_model(vgg19_path):
     ''' Build vgg19 network from vgg19.npy
@@ -29,7 +55,7 @@ def build_vgg_model(vgg19_path):
     vgg = np.load(vgg19_path).item()
 
     model = {}
-    model['input'] = tf.Variable(tf.zeros([1,HEIGHT,WIDTH,CHANNEL]))
+    model['input'] = tf.Variable(tf.random_uniform([1,HEIGHT,WIDTH,CHANNEL],minval=0,maxval=255))
     model['conv1_1'] = build_vgg_conv(vgg,model['input'],'conv1_1')
     model['conv1_2'] = build_vgg_conv(vgg,model['conv1_1'],'conv1_2')
     model['pool1'] = build_vgg_pool(vgg,model['conv1_2'],'pool1')
@@ -68,9 +94,69 @@ def build_vgg_conv(vgg, prev, name):
 def build_vgg_pool(vgg,prev,name):
     return tf.nn.avg_pool(prev,ksize=[1,2,2,1],strides=[1,2,2,1], padding='SAME',name=name)
 
+
+def set_style_loss(model):
+
+    def gram_matrix(conv,N,M):
+        matrix = tf.reshape(conv,(M,N))
+        return tf.matmul(tf.transpose(matrix), matrix)
+
+    layers = ['conv1_1', 'conv2_1', 'conv3_1', 'conv4_1', 'conv5_1']
+    loss = 0.
+
+    for l in layers:
+        style_layer = sess.run(model[l])
+        N = style_layer.shape[3]
+        M = style_layer.shape[1]*style_layer.shape[2]
+
+        G = gram_matrix(style_layer,N,M)
+        A = gram_matrix(model[l],N,M)
+
+        loss += 1./(4.* M**2 * N**2)* tf.reduce_sum(tf.pow(G-A,2)) * 1./5.
+
+    return loss
+    
+
+def set_content_loss(model):
+    content_layer = sess.run(model['conv4_2'])
+    N = content_layer.shape[3]
+    M = content_layer.shape[1]*content_layer.shape[2]
+
+    loss = 1./(2. * M * N) * tf.reduce_sum(tf.pow((content_layer - model['conv4_2']),2))
+    return loss
+
 if __name__ == '__main__':
     args = opt_parse()
     model = build_vgg_model(args.vgg19)
-    sess = tf.InteractiveSession()
-    tf.summary.FileWriter('tmp/test.log',sess.graph)
+    img_cont = load_rgb(args.content)
+    img_sty = load_rgb(args.style)
 
+    sess.run(tf.global_variables_initializer())
+    tf.assign(model['input'], (img_cont))
+    content_loss = set_content_loss(model)
+
+
+    tf.assign(model['input'],img_sty)
+    style_loss = set_style_loss(model)
+
+    
+    #Loss = alpha*content_loss + beta*style_loss
+    Loss = content_loss
+    #Loss = tf.reduce_sum(tf.pow(img_cont - model['input'], 2))
+
+    optimizer = tf.train.AdamOptimizer(2.0)
+    train_step = optimizer.minimize(Loss)
+
+
+    sess.run(tf.global_variables_initializer())
+    start = time.time()
+    for e in range(nb_epoch):
+        _,loss = sess.run([train_step,Loss])
+        if (e+1) % 10 == 0:
+            print('Epoch:{:5d} Loss:{:e} time:{:8.2f}s'.format(e+1,loss,time.time()-start))
+            start = time.time()
+            img_art = sess.run(model['input'])
+            save_rgb(args.output,img_art)
+
+
+    
