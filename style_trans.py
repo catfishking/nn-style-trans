@@ -15,7 +15,7 @@ HEIGHT=600
 WIDTH=800
 CHANNEL=3
 nb_epoch = 100000
-alpha = 5*1e-3
+alpha = 8*1e-5
 beta =1.
 
 VGG_MEAN = [103.939, 116.779, 123.68]
@@ -125,7 +125,8 @@ def set_content_loss(model):
     N = content_layer.shape[3]
     M = content_layer.shape[1]*content_layer.shape[2]
 
-    loss = 1./(2. * M * N) * tf.reduce_sum(tf.pow((content_layer - model['conv4_2']),2))
+    #loss = 1./(2. * M * N) * tf.reduce_sum(tf.pow((content_layer - model['conv4_2']),2))
+    loss = 1./(2.) * tf.reduce_sum(tf.pow((content_layer - model['conv4_2']),2))
     return loss
 
 if __name__ == '__main__':
@@ -146,7 +147,7 @@ if __name__ == '__main__':
     #Loss = style_loss
     #Loss = tf.reduce_sum(tf.pow(cont - model['input'],2))
 
-    optimizer = tf.train.AdamOptimizer(1.)
+    optimizer = tf.train.AdamOptimizer(2.)
     train_step = optimizer.minimize(Loss)
     
     #writer = tf.train.SummaryWriter('tmp/tf_logs',sess.graph)
