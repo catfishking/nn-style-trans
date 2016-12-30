@@ -14,8 +14,8 @@ sess = tf.Session(config=config)
 HEIGHT=600
 WIDTH=800
 CHANNEL=3
-nb_epoch = 2000
-alpha = 1e-4
+nb_epoch = 100000
+alpha = 5*1e-3
 beta =1.
 
 VGG_MEAN = [103.939, 116.779, 123.68]
@@ -67,17 +67,20 @@ def build_vgg_model(vgg19_path):
     model['conv3_1'] = build_vgg_conv(vgg,model['pool2'],'conv3_1')
     model['conv3_2'] = build_vgg_conv(vgg,model['conv3_1'],'conv3_2')
     model['conv3_3'] = build_vgg_conv(vgg,model['conv3_2'],'conv3_3')
-    model['pool3'] = build_vgg_pool(vgg,model['conv3_3'],'pool3')
+    model['conv3_4'] = build_vgg_conv(vgg,model['conv3_3'],'conv3_4')
+    model['pool3'] = build_vgg_pool(vgg,model['conv3_4'],'pool3')
 
     model['conv4_1'] = build_vgg_conv(vgg,model['pool3'],'conv4_1')
     model['conv4_2'] = build_vgg_conv(vgg,model['conv4_1'],'conv4_2')
     model['conv4_3'] = build_vgg_conv(vgg,model['conv4_2'],'conv4_3')
-    model['pool4'] = build_vgg_pool(vgg,model['conv4_3'],'pool4')
+    model['conv4_4'] = build_vgg_conv(vgg,model['conv4_3'],'conv4_4')
+    model['pool4'] = build_vgg_pool(vgg,model['conv4_4'],'pool4')
 
     model['conv5_1'] = build_vgg_conv(vgg,model['pool4'],'conv5_1')
     model['conv5_2'] = build_vgg_conv(vgg,model['conv5_1'],'conv5_2')
     model['conv5_3'] = build_vgg_conv(vgg,model['conv5_2'],'conv5_3')
-    model['pool5'] = build_vgg_pool(vgg,model['conv5_3'],'pool5')
+    model['conv5_4'] = build_vgg_conv(vgg,model['conv5_3'],'conv5_4')
+    model['pool5'] = build_vgg_pool(vgg,model['conv5_4'],'pool5')
 
     return model
 
@@ -132,27 +135,27 @@ if __name__ == '__main__':
     img_sty = load_rgb(args.style)
 
     sess.run(tf.global_variables_initializer())
-    tf.assign(model['input'], (img_cont))
+    sess.run(tf.assign(model['input'], (img_cont)))
     content_loss = set_content_loss(model)
 
-
-    tf.assign(model['input'],img_sty)
+    sess.run(tf.assign(model['input'],img_sty))
     style_loss = set_style_loss(model)
 
     
-    #Loss = alpha*content_loss + beta*style_loss
-    Loss = content_loss
-    #Loss = tf.reduce_sum(tf.pow(img_cont - model['input'], 2))
+    Loss = alpha*content_loss + beta*style_loss
+    #Loss = style_loss
+    #Loss = tf.reduce_sum(tf.pow(cont - model['input'],2))
 
-    optimizer = tf.train.AdamOptimizer(2.0)
+    optimizer = tf.train.AdamOptimizer(1.)
     train_step = optimizer.minimize(Loss)
-
+    
+    #writer = tf.train.SummaryWriter('tmp/tf_logs',sess.graph)
 
     sess.run(tf.global_variables_initializer())
     start = time.time()
     for e in range(nb_epoch):
         _,loss = sess.run([train_step,Loss])
-        if (e+1) % 10 == 0:
+        if (e+1) % 100 == 0:
             print('Epoch:{:5d} Loss:{:e} time:{:8.2f}s'.format(e+1,loss,time.time()-start))
             start = time.time()
             img_art = sess.run(model['input'])
