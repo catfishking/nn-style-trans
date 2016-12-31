@@ -15,7 +15,7 @@ HEIGHT=600
 WIDTH=800
 CHANNEL=3
 nb_epoch = 100000
-alpha = 8*1e-5
+alpha = 1e-8
 beta =1.
 
 VGG_MEAN = [103.939, 116.779, 123.68]
@@ -147,12 +147,13 @@ if __name__ == '__main__':
     #Loss = style_loss
     #Loss = tf.reduce_sum(tf.pow(cont - model['input'],2))
 
-    optimizer = tf.train.AdamOptimizer(2.)
+    optimizer = tf.train.AdamOptimizer(1)
     train_step = optimizer.minimize(Loss)
     
     #writer = tf.train.SummaryWriter('tmp/tf_logs',sess.graph)
 
     sess.run(tf.global_variables_initializer())
+    sess.run(tf.assign(model['input'],img_cont))
     start = time.time()
     for e in range(nb_epoch):
         _,loss = sess.run([train_step,Loss])
@@ -161,6 +162,4 @@ if __name__ == '__main__':
             start = time.time()
             img_art = sess.run(model['input'])
             save_rgb(args.output,img_art)
-
-
-    
+   
