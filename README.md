@@ -7,7 +7,12 @@ tensorflow
 # Usage
 >*Please download vgg19.npy from [tensorflow-vgg] (https://github.com/machrisaa/tensorflow-vgg)*
 
-`$ python style_trans.py [-h] [-o OUTPUT] [-v VGG19] content_img style_img`
+`$ python style_trans.py [-h] [-o OUTPUT] [-v VGG19] content_img style_img`  
+
+### Results
+<img src=https://github.com/catfishking/nn-style-trans/blob/master/image/ntu2.png?raw=true width=250px>
+<img src=https://github.com/catfishking/nn-style-trans/blob/master/image/StarryNight.jpg?raw=true width=250px>
+<img src=http://i.imgur.com/YwDI90D.jpg width=250px>
 
 # Referennce
 https://github.com/log0/neural-style-painting  
