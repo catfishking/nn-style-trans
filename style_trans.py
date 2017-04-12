@@ -5,7 +5,7 @@ import time
 
 from PIL import Image
 
-config = tf.ConfigProto()                                                                                                                                     
+config = tf.ConfigProto()
 config.gpu_options.allow_growth=True
 #config.log_device_placement=True
 sess = tf.Session(config=config)
