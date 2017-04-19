@@ -21,28 +21,34 @@
     Reference:
     https://github.com/tensorflow/models/blob/master/resnet/resnet_model.py
 '''
-
+import time
 import numpy as np
 import tensorflow as tf
 import vgg_19
+import utils
+from tensorflow.python.client import timeline
 
+
+config = tf.ConfigProto(allow_soft_placement=True)
+config.gpu_options.allow_growth=True
 
 class StyleGenerator():
-    def __init__(self,input_size,mode = 'train'):
+    def __init__(self,input_size, mode='train'):
         '''
             input_size: height or weight
             mode: 'train' or 'test'
         '''
         self.input_size = input_size
         self.mode = mode
-        self.alpha = 1e-8
+        self.alpha = 1.e-8
         self.beta = 1.
 
 
     def build_graph(self):
         self._build_model()
-        if self.mode == 'train':
-            self._build_train_op()
+        #XXX
+        #if self.mode == 'train':
+        #    self._build_train_op()
         self.summaries = tf.summary.merge_all()
 
 
@@ -58,8 +64,8 @@ class StyleGenerator():
     # TODO: use args to pass arch opts
     def _build_model(self):
         with tf.variable_scope('init'):
-            x = tf.placeholder(tf.float32,[None, self.input_size, self.input_size, 3])
-            x = self._conv('init_conv',x,9,3,32,self._stride_arr(1))
+            self.x_input = tf.placeholder(tf.float32,[None, self.input_size, self.input_size, 3])
+            x = self._conv('init_conv', self.x_input, 9, 3, 32,self._stride_arr(1))
         #activate_before_residual = [True, False, False]
         filters = [32, 64, 128,\
                 64,32,3]
@@ -68,11 +74,11 @@ class StyleGenerator():
             x = self._conv('ds64', x, 3,filters[0],filters[1],self._stride_arr(2) )
         with tf.variable_scope('dsample_2'):
             x = self._conv('ds128', x, 3,filters[1],filters[2], self._stride_arr(2))
-
+        
         for i in range(5): # five residual blocks
             with tf.variable_scope('res_block_{}'.format(i)):
                 x = self._residual(x,filters[2],filters[2], self._stride_arr(1))
-
+        
         # NOTE google brain use nearest neighbors + cnn
         with tf.variable_scope('usample_1'):
             x = self._conv_trans('us64', x, 3, filters[2], filters[3], self._stride_arr(2),\
@@ -84,23 +90,29 @@ class StyleGenerator():
         with tf.variable_scope('last'):
             x = self._conv('last_conv', x, 9, filters[4], filters[5],self._stride_arr(1))
 
+        self.out = x
+        return self.out
+
+        # XXX
+        '''
         with tf.variable_scope('vgg'):
             self.vgg = vgg_19.VGG19('./model/vgg19.npy', x=x, HEIGHT=256, WIDTH=256)
-
         with tf.variable_scope('cost'):
             content_loss = self.vgg.set_content_loss()
             style_loss = self.vgg.set_style_loss()
             self.cost = self.alpha*content_loss + self.beta*style_loss
             # TODO: add L2 norm
             tf.summary.scalar('cost',self.cost)
+        '''
 
     # NOTE: use argv to pass some options
+    '''
     def _build_train_op(self):
         """Build training specific ops for the graph."""
 
         optimizer = tf.train.AdamOptimizer()
         self.train_step = optimizer.minimize(self.cost)
-
+    '''
     # NOTE: use batch_norm in tf layers
     def _batch_norm(self,name,x):
         if self.mode == 'train':
@@ -156,19 +168,98 @@ class StyleGenerator():
     # TODO pass relu leakiness argvs
     def _relu(self,x,leakiness=0.0):
         return tf.where(tf.less(x, 0.0), leakiness * x, x, name='leaky_relu' )
+ 
+
+def set_loss(style_img):
+
+    style_loss = 0.
+    content_loss = 0.
+    with tf.Graph().as_default(), tf.Session(config=config) as sess:
+        style_image = tf.placeholder(tf.float32, shape=[1,256,256,3], name='style_image')
+        style_net = vgg_19.VGG19('./model/vgg19.npy',x=style_image,HEIGHT=256,WIDTH=256)
+        style_layers = ['conv1_1', 'conv2_1', 'conv3_1', 'conv4_1', 'conv5_1']
+
+        def gram_matrix(conv,N,M):
+            matrix = tf.reshape(conv,(M,N))
+            return tf.matmul(tf.transpose(matrix), matrix)
+
+        style_mat = {}
+
+        for l in style_layers:
+            style_layer = sess.run([style_net.model[l]],feed_dict={style_image:style_img})
+            style_layer = style_layer[0]
+            N = style_layer.shape[3]
+            M = style_layer.shape[1]*style_layer.shape[2]
+
+            matrix = np.reshape(style_layer,(M,N))
+            G = np.dot(matrix.T, matrix)
+
+            style_mat[l] = G
+                
+    with tf.Graph().as_default(), tf.Session(config=config) as sess:
+        content_image = tf.placeholder(tf.float32, shape=[None, 256, 256, 3], name='content_image')
+        content_net = vgg_19.VGG19('./model/vgg19.npy', x=content_image, HEIGHT=256,WIDTH=256)
+
+        model = StyleGenerator(256)
+        model.build_graph()
+        net = vgg_19.VGG19('./model/vgg19.npy', x=model.out, HEIGHT=256, WIDTH=256)
+
+        content_layers = ['conv4_2']
+        content_layer = content_net.model[content_layers[0]]
+        N = content_layer.get_shape().as_list()[3]
+        M = content_layer.get_shape().as_list()[1]*content_layer.get_shape().as_list()[2]
+
+        content_loss = 1./(2. * M * N) * tf.reduce_sum(tf.pow((content_net.model['conv4_2'] - net.model['conv4_2']),2))
+
+
+        for l in style_layers:
+            style_layer = net.model[l]
+            N = style_layer.get_shape().as_list()[3]
+            M = style_layer.get_shape().as_list()[1]*style_layer.get_shape().as_list()[2]
+            A = gram_matrix(style_layer,N,M)
+            style_loss += 1./(4.* M**2 * N**2)* tf.reduce_sum(tf.pow(style_mat[l]-A,2)) * 1./5.
+
+        Loss =  model.alpha * content_loss #+ model.beta * style_loss*0.
+        optimizer = tf.train.AdamOptimizer(learning_rate=1e-3).minimize(Loss)
+        
+        in_image_bufffer = tf.summary.image('input_image',model.x_input, max_outputs=2)
+        out_image_buffer = tf.summary.image('output_image',model.out, max_outputs=2)
+        tf.summary.scalar("loss", Loss)
+        summary_op = tf.summary.merge_all()
+        
+        batch_size = 50
+        data_batch = utils.coco_input('/tmp3/troutman/COCO/train2014_256', batch_size)
+        nb_batch = 82784/batch_size
+
+        init = tf.global_variables_initializer()
+
+        writer = tf.summary.FileWriter('./log', graph=tf.get_default_graph())
+        print('start training')
+        sess.run(init)
+        coord = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(coord = coord)
+        for ep in xrange(200):
+            ep_time = time.time()
+            ep_loss = 0.
+            for bs in xrange(nb_batch):
+                image = sess.run(data_batch)
+                print image.shape
+                loss,out,summary = sess.run([Loss, model.out,summary_op],feed_dict={model.x_input:image,content_image:image})
+                print bs,loss
+                writer.add_summary(summary, ep * nb_batch + bs)
+
+                if bs % 10 == 9:
+                    print 'save'
+                    utils.save_rgb('haha.png'.format(ep,bs),out[0][np.newaxis,:])
+            print('Epoch:{:4} Loss:{:f} Time:{:f}seconds'.format(ep,ep_loss/nb_batch,time.time()-ep_time))
+
+        coord.request_stop()
+        coord.join(threads)
 
 
 if __name__ == '__main__':
-    model = StyleGenerator(256)
-    model.build_graph()
-
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth=True
-    with tf.Session(config=config) as sess:
-        # XXX
-        import show_graph
-        sess.run(tf.global_variables_initializer())
-        writer = tf.summary.FileWriter('./tfboard_log/', graph=tf.get_default_graph())
-        writer.close()
-
-
+    
+    style_img = utils.load_rgb('./image/StarryNight_256.jpg')
+    with tf.device(':/gpu:3'):
+        set_loss(style_img)
+       
