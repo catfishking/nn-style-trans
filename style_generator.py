@@ -20,6 +20,14 @@
     https://arxiv.org/pdf/1605.07146v1.pdf
     Reference:
     https://github.com/tensorflow/models/blob/master/resnet/resnet_model.py
+
+    @misc{engstrom2016faststyletransfer,
+        author = {Logan Engstrom},
+        title = {Fast Style Transfer},
+        year = {2016},
+        howpublished = {\url{https://github.com/lengstrom/fast-style-transfer/}},
+        note = {commit xxxxxxx}
+    }
 '''
 import time
 import numpy as np
@@ -42,7 +50,7 @@ class StyleGenerator():
         self.input_size = input_size
         self.mode = mode
         self.alpha = 1.
-        self.beta = 1.
+        self.beta = 1e-3
 
 
     def build_graph(self):
@@ -67,18 +75,18 @@ class StyleGenerator():
         with tf.variable_scope('init'):
             self.x_input = tf.placeholder(tf.float32,[None, self.input_size, self.input_size, 3])
             x = self._conv('init_conv', self.x_input, 9, 3, 32,self._stride_arr(1))
-            x = self._batch_norm('bn',x)
+            x = self._instance_norm('bn',x)
         #activate_before_residual = [True, False, False]
         filters = [32, 64, 128,64,32,3]
         
         with tf.variable_scope('dsample_1'):
             x = self._conv('ds64', x, 3,filters[0],filters[1],self._stride_arr(2) )
             x = self._relu(x)
-            x = self._batch_norm('bn',x)
+            x = self._instance_norm('bn',x)
         with tf.variable_scope('dsample_2'):
             x = self._conv('ds128', x, 3,filters[1],filters[2], self._stride_arr(2))
             x = self._relu(x)
-            x = self._batch_norm('bn',x)
+            x = self._instance_norm('bn',x)
         
         for i in range(5): # five residual blocks
             with tf.variable_scope('res_block_{}'.format(i)):
@@ -89,16 +97,16 @@ class StyleGenerator():
             x = self._conv_trans('us64', x, 3, filters[2], filters[3], self._stride_arr(2),\
                     self._out_shape(x, 128, filters[3]))
             x = self._relu(x)
-            x = self._batch_norm('bn',x)
+            x = self._instance_norm('bn',x)
         with tf.variable_scope('usample_2'):
             x = self._conv_trans('us32', x, 3, filters[3], filters[4], self._stride_arr(2),\
                     self._out_shape(x, 256, filters[4]))
             x = self._relu(x)
-            x = self._batch_norm('bn',x)
+            x = self._instance_norm('bn',x)
         
         with tf.variable_scope('last'):
             x = self._conv('last_conv', x, 9, filters[4], filters[5],self._stride_arr(1))
-            x = self._batch_norm('bn',x)
+            x = self._instance_norm('bn',x)
             self.out = tf.nn.tanh(x) * 150 + 255./2
         
         return self.out
@@ -133,6 +141,16 @@ class StyleGenerator():
                     epsilon=1e-5,is_training=False,scope=name)
         return BN
 
+    def _instance_norm(self,name,x):
+        with tf.variable_scope(name):
+            channels = x.get_shape()[3]
+            var_shape = [channels]
+            mu, sigma_sq = tf.nn.moments(x, [1,2], keep_dims=True)
+            shift = tf.Variable(tf.zeros(var_shape),name='shift')
+            scale = tf.Variable(tf.ones(var_shape),name='scale')
+            epsilon = 1e-5
+            normalized = (x-mu)/(sigma_sq + epsilon)**(.5)
+            return scale * normalized + shift
 
     def _conv(self,name,x,filter_size,in_filters,out_filters,stride):
         ''' Convolution '''
@@ -160,12 +178,12 @@ class StyleGenerator():
         orig_x = x
         with tf.variable_scope('sub1'):
             x = self._conv('conv1', x, 3, in_filter, out_filter, stride)
-            x = self._batch_norm('bn1',x)
+            x = self._instance_norm('bn1',x)
             x = self._relu(x)
 
         with tf.variable_scope('sub2'):
             x = self._conv('conv2', x, 3, in_filter, out_filter, stride)
-            x = self._batch_norm('bn2',x)
+            x = self._instance_norm('bn2',x)
 
         with tf.variable_scope('sub_add'):
             if in_filter != out_filter:
@@ -186,12 +204,8 @@ def set_loss(style_img):
     content_loss = 0.
     with tf.Graph().as_default(), tf.Session() as sess:
         style_image = tf.placeholder(tf.float32, shape=[1,256,256,3], name='style_image')
-        style_net = vgg_19.VGG19('./model/vgg19.npy',x=style_image,HEIGHT=256,WIDTH=256)
+        style_net = vgg_19.VGG19('./model/vgg19.npy',x=style_image,reuse=True,HEIGHT=256,WIDTH=256)
         style_layers = ['conv1_1', 'conv2_1', 'conv3_1', 'conv4_1', 'conv5_1']
-
-        def gram_matrix(conv,N,M):
-            matrix = tf.reshape(conv,(M,N))
-            return tf.matmul(tf.transpose(matrix), matrix)
 
         style_mat = {}
 
@@ -208,11 +222,11 @@ def set_loss(style_img):
                 
     with tf.Graph().as_default(), tf.Session() as sess:
         content_image = tf.placeholder(tf.float32, shape=[None, 256, 256, 3], name='content_image')
-        content_net = vgg_19.VGG19('./model/vgg19.npy', x=content_image, HEIGHT=256,WIDTH=256)
+        content_net = vgg_19.VGG19('./model/vgg19.npy', x=content_image,reuse=True, HEIGHT=256,WIDTH=256)
 
         model = StyleGenerator(256)
         model.build_graph()
-        net = vgg_19.VGG19('./model/vgg19.npy', x=model.out, HEIGHT=256, WIDTH=256)
+        net = vgg_19.VGG19('./model/vgg19.npy', x=model.out,reuse=True, HEIGHT=256, WIDTH=256)
 
         content_layers = ['conv4_2']
         #content_layers = ['input']
@@ -235,7 +249,7 @@ def set_loss(style_img):
 
             style_loss += 1./(4.* M**2 * N**2)* tf.reduce_sum(tf.pow(style_mat[l]-A,2)) * 1./5.
 
-        Loss =  model.alpha * content_loss + model.beta * style_loss*0.
+        Loss =  model.alpha * content_loss + model.beta * style_loss
         optimizer = tf.train.AdamOptimizer(learning_rate=1).minimize(Loss)
         
         in_image_bufffer = tf.summary.image('input_image',model.x_input, max_outputs=2)
@@ -260,7 +274,7 @@ def set_loss(style_img):
             ep_loss = 0.
             for bs in xrange(nb_batch):
                 image = sess.run(data_batch)
-                print image.shape
+                #print image.shape
                 _, loss,out,summary = sess.run([optimizer, Loss, model.out,summary_op],\
                         feed_dict={model.x_input:image,content_image:image})
                 print bs,loss
@@ -276,7 +290,6 @@ def set_loss(style_img):
 
 
 if __name__ == '__main__':
-    
     style_img = utils.load_rgb('./image/StarryNight_256.jpg')
     set_loss(style_img)
        
