@@ -223,11 +223,16 @@ def set_loss(style_img):
         content_loss = 1./(2. * M * N) * tf.reduce_sum(tf.pow((content_net.model[content_layers[0]] -\
                                                 net.model[content_layers[0]]),2))
 
+
         for l in style_layers:
             style_layer = net.model[l]
             N = style_layer.get_shape().as_list()[3]
             M = style_layer.get_shape().as_list()[1]*style_layer.get_shape().as_list()[2]
-            A = gram_matrix(style_layer,N,M)
+            B = tf.shape(style_layer)[0]
+
+            matrix = tf.reshape(style_layer,(B,M,N))
+            A = tf.matmul(tf.transpose(matrix,perm=[0, 2, 1]), matrix)
+
             style_loss += 1./(4.* M**2 * N**2)* tf.reduce_sum(tf.pow(style_mat[l]-A,2)) * 1./5.
 
         Loss =  model.alpha * content_loss + model.beta * style_loss*0.
@@ -238,7 +243,7 @@ def set_loss(style_img):
         tf.summary.scalar("loss", Loss)
         summary_op = tf.summary.merge_all()
         
-        batch_size = 30
+        batch_size = 20
         data_batch = utils.coco_input('/tmp3/troutman/COCO/train2014_256', batch_size)
         #data_batch = utils.coco_input('/tmp3/troutman/COCO/debug', batch_size)
         nb_batch = 82784/batch_size
