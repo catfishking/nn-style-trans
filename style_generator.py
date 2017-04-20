@@ -29,8 +29,9 @@ import utils
 from tensorflow.python.client import timeline
 
 
-config = tf.ConfigProto(allow_soft_placement=True)
-config.gpu_options.allow_growth=True
+#config = tf.ConfigProto(allow_soft_placement=True)
+#config = tf.ConfigProto()
+#config.gpu_options.allow_growth=True
 
 class StyleGenerator():
     def __init__(self,input_size, mode='train'):
@@ -40,7 +41,7 @@ class StyleGenerator():
         '''
         self.input_size = input_size
         self.mode = mode
-        self.alpha = 1.e-8
+        self.alpha = 1.
         self.beta = 1.
 
 
@@ -49,7 +50,7 @@ class StyleGenerator():
         #XXX
         #if self.mode == 'train':
         #    self._build_train_op()
-        self.summaries = tf.summary.merge_all()
+        #self.summaries = tf.summary.merge_all()
 
 
     def _stride_arr(self,stride):
@@ -66,14 +67,18 @@ class StyleGenerator():
         with tf.variable_scope('init'):
             self.x_input = tf.placeholder(tf.float32,[None, self.input_size, self.input_size, 3])
             x = self._conv('init_conv', self.x_input, 9, 3, 32,self._stride_arr(1))
+            x = self._batch_norm('bn',x)
         #activate_before_residual = [True, False, False]
-        filters = [32, 64, 128,\
-                64,32,3]
+        filters = [32, 64, 128,64,32,3]
         
         with tf.variable_scope('dsample_1'):
             x = self._conv('ds64', x, 3,filters[0],filters[1],self._stride_arr(2) )
+            x = self._relu(x)
+            x = self._batch_norm('bn',x)
         with tf.variable_scope('dsample_2'):
             x = self._conv('ds128', x, 3,filters[1],filters[2], self._stride_arr(2))
+            x = self._relu(x)
+            x = self._batch_norm('bn',x)
         
         for i in range(5): # five residual blocks
             with tf.variable_scope('res_block_{}'.format(i)):
@@ -83,14 +88,19 @@ class StyleGenerator():
         with tf.variable_scope('usample_1'):
             x = self._conv_trans('us64', x, 3, filters[2], filters[3], self._stride_arr(2),\
                     self._out_shape(x, 128, filters[3]))
+            x = self._relu(x)
+            x = self._batch_norm('bn',x)
         with tf.variable_scope('usample_2'):
             x = self._conv_trans('us32', x, 3, filters[3], filters[4], self._stride_arr(2),\
                     self._out_shape(x, 256, filters[4]))
-
+            x = self._relu(x)
+            x = self._batch_norm('bn',x)
+        
         with tf.variable_scope('last'):
             x = self._conv('last_conv', x, 9, filters[4], filters[5],self._stride_arr(1))
-
-        self.out = x
+            x = self._batch_norm('bn',x)
+            self.out = tf.nn.tanh(x) * 150 + 255./2
+        
         return self.out
 
         # XXX
@@ -174,7 +184,7 @@ def set_loss(style_img):
 
     style_loss = 0.
     content_loss = 0.
-    with tf.Graph().as_default(), tf.Session(config=config) as sess:
+    with tf.Graph().as_default(), tf.Session() as sess:
         style_image = tf.placeholder(tf.float32, shape=[1,256,256,3], name='style_image')
         style_net = vgg_19.VGG19('./model/vgg19.npy',x=style_image,HEIGHT=256,WIDTH=256)
         style_layers = ['conv1_1', 'conv2_1', 'conv3_1', 'conv4_1', 'conv5_1']
@@ -196,7 +206,7 @@ def set_loss(style_img):
 
             style_mat[l] = G
                 
-    with tf.Graph().as_default(), tf.Session(config=config) as sess:
+    with tf.Graph().as_default(), tf.Session() as sess:
         content_image = tf.placeholder(tf.float32, shape=[None, 256, 256, 3], name='content_image')
         content_net = vgg_19.VGG19('./model/vgg19.npy', x=content_image, HEIGHT=256,WIDTH=256)
 
@@ -205,12 +215,13 @@ def set_loss(style_img):
         net = vgg_19.VGG19('./model/vgg19.npy', x=model.out, HEIGHT=256, WIDTH=256)
 
         content_layers = ['conv4_2']
+        #content_layers = ['input']
         content_layer = content_net.model[content_layers[0]]
         N = content_layer.get_shape().as_list()[3]
         M = content_layer.get_shape().as_list()[1]*content_layer.get_shape().as_list()[2]
 
-        content_loss = 1./(2. * M * N) * tf.reduce_sum(tf.pow((content_net.model['conv4_2'] - net.model['conv4_2']),2))
-
+        content_loss = 1./(2. * M * N) * tf.reduce_sum(tf.pow((content_net.model[content_layers[0]] -\
+                                                net.model[content_layers[0]]),2))
 
         for l in style_layers:
             style_layer = net.model[l]
@@ -219,16 +230,17 @@ def set_loss(style_img):
             A = gram_matrix(style_layer,N,M)
             style_loss += 1./(4.* M**2 * N**2)* tf.reduce_sum(tf.pow(style_mat[l]-A,2)) * 1./5.
 
-        Loss =  model.alpha * content_loss #+ model.beta * style_loss*0.
-        optimizer = tf.train.AdamOptimizer(learning_rate=1e-3).minimize(Loss)
+        Loss =  model.alpha * content_loss + model.beta * style_loss*0.
+        optimizer = tf.train.AdamOptimizer(learning_rate=1).minimize(Loss)
         
         in_image_bufffer = tf.summary.image('input_image',model.x_input, max_outputs=2)
         out_image_buffer = tf.summary.image('output_image',model.out, max_outputs=2)
         tf.summary.scalar("loss", Loss)
         summary_op = tf.summary.merge_all()
         
-        batch_size = 50
+        batch_size = 30
         data_batch = utils.coco_input('/tmp3/troutman/COCO/train2014_256', batch_size)
+        #data_batch = utils.coco_input('/tmp3/troutman/COCO/debug', batch_size)
         nb_batch = 82784/batch_size
 
         init = tf.global_variables_initializer()
@@ -244,13 +256,14 @@ def set_loss(style_img):
             for bs in xrange(nb_batch):
                 image = sess.run(data_batch)
                 print image.shape
-                loss,out,summary = sess.run([Loss, model.out,summary_op],feed_dict={model.x_input:image,content_image:image})
+                _, loss,out,summary = sess.run([optimizer, Loss, model.out,summary_op],\
+                        feed_dict={model.x_input:image,content_image:image})
                 print bs,loss
                 writer.add_summary(summary, ep * nb_batch + bs)
 
                 if bs % 10 == 9:
                     print 'save'
-                    utils.save_rgb('haha.png'.format(ep,bs),out[0][np.newaxis,:])
+                    utils.save_rgb('haha.jpg'.format(ep,bs),out[0][np.newaxis,:])
             print('Epoch:{:4} Loss:{:f} Time:{:f}seconds'.format(ep,ep_loss/nb_batch,time.time()-ep_time))
 
         coord.request_stop()
@@ -260,6 +273,5 @@ def set_loss(style_img):
 if __name__ == '__main__':
     
     style_img = utils.load_rgb('./image/StarryNight_256.jpg')
-    with tf.device(':/gpu:3'):
-        set_loss(style_img)
+    set_loss(style_img)
        

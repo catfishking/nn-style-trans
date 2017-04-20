@@ -8,14 +8,13 @@ from PIL import Image
 config = tf.ConfigProto()
 config.gpu_options.allow_growth=True
 
-VGG_MEAN = [103.939, 116.779, 123.68]
 
 def load_rgb(img_path):
     ''' Load RGB image then return a 4d(1,R,G,B) numpy array'''
     im = Image.open(img_path)
     if im.mode != 'RGB':
         im = im.convert('RGB')
-    image = np.array(list(im.getdata()),dtype='float32') - VGG_MEAN
+    image = np.array(list(im.getdata()),dtype='float32')
     #image = image.astype('float32')
     image = image.reshape(1,im.size[1],im.size[0],3)
     return image
@@ -23,7 +22,7 @@ def load_rgb(img_path):
 def save_rgb(out_path,array):
     ''' Save RGB image'''
     array = array.reshape(array.shape[1:])
-    array = array + VGG_MEAN
+    array = array
     array = np.clip(array,0,255).astype('int8')
     im = Image.fromarray(array,'RGB')
     im.save(out_path)
@@ -51,8 +50,18 @@ def coco_input(path, batch_size = 30):
 
     return data_batch
 
+def read_COCO(path):
+    # XXX don't use it
+    ''' Return a huge 4-d array of images'''
+    images = []
+    img_files = [join(path,f) for f in listdir(path) if isfile(join(path, f))]
+    for img in img_files:
+        images.append(load_rgb(img))
+    images = np.array(images)
+    return images
 
 if __name__ == '__main__':
+    
     data_batch = coco_input('/tmp3/troutman/COCO/train2014_256', 1)
     with tf.Session(config=config) as sess:
         coord = tf.train.Coordinator()
@@ -63,6 +72,9 @@ if __name__ == '__main__':
             save_rgb('test.png',a)
         coord.request_stop()
         coord.join(threads)
+    
+    #images = read_COCO('/tmp3/troutman/COCO/train2014_256')
+    #print images.shape
     
 
 

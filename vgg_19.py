@@ -6,6 +6,8 @@ config.gpu_options.allow_growth=True
 sess = tf.Session(config=config)
 
 
+VGG_MEAN = [103.939, 116.779, 123.68]
+
 class VGG19:
     ''' Build vgg19 network from vgg19.npy
     which is from https://github.com/machrisaa/tensorflow-vgg
@@ -19,6 +21,7 @@ class VGG19:
                 self.model['input'] = tf.Variable(tf.random_uniform([1,HEIGHT,WIDTH,CHANNEL],minval=0,maxval=255))
             else:
                 self.model['input'] = x
+            self.model['input'] = self.model['input'] - VGG_MEAN
             self.model['conv1_1'] = self.build_vgg_conv(vgg,self.model['input'],'conv1_1')
             self.model['conv1_2'] = self.build_vgg_conv(vgg,self.model['conv1_1'],'conv1_2')
             self.model['pool1'] = self.build_vgg_pool(vgg,self.model['conv1_2'],'pool1')
