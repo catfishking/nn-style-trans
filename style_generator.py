@@ -49,9 +49,6 @@ class StyleGenerator():
         '''
         self.input_size = input_size
         self.mode = mode
-        self.alpha = 1.
-        self.beta = 1e-3
-
 
     def build_graph(self):
         self._build_model()
@@ -198,7 +195,8 @@ class StyleGenerator():
         return tf.where(tf.less(x, 0.0), leakiness * x, x, name='leaky_relu' )
  
 
-def set_loss(style_img):
+def build_model(style_path, style_weight, content_weight):
+    style_img = utils.load_rgb(style_path)
 
     style_loss = 0.
     content_loss = 0.
@@ -220,76 +218,39 @@ def set_loss(style_img):
 
             style_mat[l] = G
                 
-    with tf.Graph().as_default(), tf.Session() as sess:
-        content_image = tf.placeholder(tf.float32, shape=[None, 256, 256, 3], name='content_image')
-        content_net = vgg_19.VGG19('./model/vgg19.npy', x=content_image,reuse=True, HEIGHT=256,WIDTH=256)
+    content_image = tf.placeholder(tf.float32, shape=[None, 256, 256, 3], name='content_image')
+    content_net = vgg_19.VGG19('./model/vgg19.npy', x=content_image,reuse=True, HEIGHT=256,WIDTH=256)
 
-        model = StyleGenerator(256)
-        model.build_graph()
-        net = vgg_19.VGG19('./model/vgg19.npy', x=model.out,reuse=True, HEIGHT=256, WIDTH=256)
+    model = StyleGenerator(256)
+    model.build_graph()
+    net = vgg_19.VGG19('./model/vgg19.npy', x=model.out,reuse=True, HEIGHT=256, WIDTH=256)
 
-        content_layers = ['conv4_2']
-        #content_layers = ['input']
-        content_layer = content_net.model[content_layers[0]]
-        N = content_layer.get_shape().as_list()[3]
-        M = content_layer.get_shape().as_list()[1]*content_layer.get_shape().as_list()[2]
+    content_layers = ['conv4_2']
+    #content_layers = ['input']
+    content_layer = content_net.model[content_layers[0]]
+    N = content_layer.get_shape().as_list()[3]
+    M = content_layer.get_shape().as_list()[1]*content_layer.get_shape().as_list()[2]
 
-        content_loss = 1./(2. * M * N) * tf.reduce_sum(tf.pow((content_net.model[content_layers[0]] -\
-                                                net.model[content_layers[0]]),2))
-
-
-        for l in style_layers:
-            style_layer = net.model[l]
-            N = style_layer.get_shape().as_list()[3]
-            M = style_layer.get_shape().as_list()[1]*style_layer.get_shape().as_list()[2]
-            B = tf.shape(style_layer)[0]
-
-            matrix = tf.reshape(style_layer,(B,M,N))
-            A = tf.matmul(tf.transpose(matrix,perm=[0, 2, 1]), matrix)
-
-            style_loss += 1./(4.* M**2 * N**2)* tf.reduce_sum(tf.pow(style_mat[l]-A,2)) * 1./5.
-
-        Loss =  model.alpha * content_loss + model.beta * style_loss
-        optimizer = tf.train.AdamOptimizer(learning_rate=1).minimize(Loss)
-        
-        in_image_bufffer = tf.summary.image('input_image',model.x_input, max_outputs=2)
-        out_image_buffer = tf.summary.image('output_image',model.out, max_outputs=2)
-        tf.summary.scalar("loss", Loss)
-        summary_op = tf.summary.merge_all()
-        
-        batch_size = 20
-        data_batch = utils.coco_input('/tmp3/troutman/COCO/train2014_256', batch_size)
-        #data_batch = utils.coco_input('/tmp3/troutman/COCO/debug', batch_size)
-        nb_batch = 82784/batch_size
-
-        init = tf.global_variables_initializer()
-
-        writer = tf.summary.FileWriter('./log', graph=tf.get_default_graph())
-        print('start training')
-        sess.run(init)
-        coord = tf.train.Coordinator()
-        threads = tf.train.start_queue_runners(coord = coord)
-        for ep in xrange(200):
-            ep_time = time.time()
-            ep_loss = 0.
-            for bs in xrange(nb_batch):
-                image = sess.run(data_batch)
-                #print image.shape
-                _, loss,out,summary = sess.run([optimizer, Loss, model.out,summary_op],\
-                        feed_dict={model.x_input:image,content_image:image})
-                print bs,loss
-                writer.add_summary(summary, ep * nb_batch + bs)
-
-                if bs % 10 == 9:
-                    print 'save'
-                    utils.save_rgb('haha.jpg'.format(ep,bs),out[0][np.newaxis,:])
-            print('Epoch:{:4} Loss:{:f} Time:{:f}seconds'.format(ep,ep_loss/nb_batch,time.time()-ep_time))
-
-        coord.request_stop()
-        coord.join(threads)
+    content_loss = 1./(2. * M * N) * tf.reduce_sum(tf.pow((content_net.model[content_layers[0]] -\
+                                            net.model[content_layers[0]]),2))
 
 
-if __name__ == '__main__':
-    style_img = utils.load_rgb('./image/StarryNight_256.jpg')
-    set_loss(style_img)
-       
+    for l in style_layers:
+        style_layer = net.model[l]
+        N = style_layer.get_shape().as_list()[3]
+        M = style_layer.get_shape().as_list()[1]*style_layer.get_shape().as_list()[2]
+        B = tf.shape(style_layer)[0]
+
+        matrix = tf.reshape(style_layer,(B,M,N))
+        A = tf.matmul(tf.transpose(matrix,perm=[0, 2, 1]), matrix)
+
+        style_loss += 1./(4.* M**2 * N**2)* tf.reduce_sum(tf.pow(style_mat[l]-A,2)) * 1./5.
+
+    Loss =  content_weight * content_loss + style_weight * style_loss
+    optimizer = tf.train.AdamOptimizer(learning_rate=1).minimize(Loss)
+    
+    in_image_bufffer = tf.summary.image('input_image',model.x_input, max_outputs=2)
+    out_image_buffer = tf.summary.image('output_image',model.out, max_outputs=2)
+    tf.summary.scalar("loss", Loss)
+
+    return Loss, optimizer, model, content_net
