@@ -20,6 +20,7 @@
     https://arxiv.org/pdf/1605.07146v1.pdf
     Reference:
     https://github.com/tensorflow/models/blob/master/resnet/resnet_model.py
+    https://github.com/tensorflow/magenta/tree/master/magenta/models/image_stylization
 
     @misc{engstrom2016faststyletransfer,
         author = {Logan Engstrom},
@@ -62,50 +63,36 @@ class StyleGenerator():
         '''Map a stride scalar to the stride array for tf.nn.conv2d.'''
         return [1, stride, stride, 1]
 
-    def _out_shape(self, x, shape, out_dim):
+    def _out_shape(self, x, stride, out_dim):
         ''' Build out_shape array for tf.nn.conv2d_transpose '''
         # use tf.shape(x)[0] to obtain batch size
-        return [ tf.shape(x)[0],shape,shape,out_dim]
+        return [ tf.shape(x)[0], x.get_shape()[1].value*stride,\
+                x.get_shape()[2].value*stride,out_dim]
 
     # TODO: use args to pass arch opts
     def _build_model(self):
         with tf.variable_scope('init'):
             self.x_input = tf.placeholder(tf.float32,[None, self.input_size, self.input_size, 3])
-            x = self._conv('init_conv', self.x_input, 9, 3, 32,self._stride_arr(1))
-            x = self._instance_norm('bn',x)
+
+            #x = self._conv('init_conv', self.x_input, 9, 3, 32,self._stride_arr(1))
+            #x = self._instance_norm('bn',x)
+
         #activate_before_residual = [True, False, False]
         filters = [32, 64, 128,64,32,3]
         
-        with tf.variable_scope('dsample_1'):
-            x = self._conv('ds64', x, 3,filters[0],filters[1],self._stride_arr(2) )
-            x = self._relu(x)
-            x = self._instance_norm('bn',x)
-        with tf.variable_scope('dsample_2'):
-            x = self._conv('ds128', x, 3,filters[1],filters[2], self._stride_arr(2))
-            x = self._relu(x)
-            x = self._instance_norm('bn',x)
-        
+        x = self._conv_layer('first', self.x_input, 9, 3, 32, 1)
+        x = self._conv_layer('dsample_1', x, 3, 32, 64, 2)
+        x = self._conv_layer('dsample_2', x, 3, 64, 128, 2)
+
         for i in range(5): # five residual blocks
-            with tf.variable_scope('res_block_{}'.format(i)):
-                x = self._residual(x,filters[2],filters[2], self._stride_arr(1))
-        
+            name = ('res_block_{}'.format(i))
+            x = self._residual(name, x, 128, 128, 1)
         # NOTE google brain use nearest neighbors + cnn
-        with tf.variable_scope('usample_1'):
-            x = self._conv_trans('us64', x, 3, filters[2], filters[3], self._stride_arr(2),\
-                    self._out_shape(x, 128, filters[3]))
-            x = self._relu(x)
-            x = self._instance_norm('bn',x)
-        with tf.variable_scope('usample_2'):
-            x = self._conv_trans('us32', x, 3, filters[3], filters[4], self._stride_arr(2),\
-                    self._out_shape(x, 256, filters[4]))
-            x = self._relu(x)
-            x = self._instance_norm('bn',x)
-        
-        with tf.variable_scope('last'):
-            x = self._conv('last_conv', x, 9, filters[4], filters[5],self._stride_arr(1))
-            x = self._instance_norm('bn',x)
-            self.out = tf.nn.tanh(x) * 150 + 255./2
-        
+        x = self._upsample_nearest_neighbor('usample_1',x,3,128,64,2)
+        x = self._upsample_nearest_neighbor('usample_2',x,3,64,32,2)
+        x = self._conv_layer('last',x,9,32,3,1,activation=False)
+        self.out = tf.nn.tanh(x) * 150 + 255./2
+
         return self.out
 
         # XXX
@@ -128,6 +115,41 @@ class StyleGenerator():
         optimizer = tf.train.AdamOptimizer()
         self.train_step = optimizer.minimize(self.cost)
     '''
+    def _conv_layer(self,name,x, filter_size, in_filter, out_filter, stride, activation=True):
+        with tf.variable_scope(name):
+            x = self._conv('conv', x, filter_size, in_filter, out_filter, self._stride_arr(stride) )
+            x = self._instance_norm('in',x)
+            if activation:
+                x = self._relu(x)
+
+            return x
+    def _upsample(self, name, x, filter_size,in_filter, out_filter, stride):
+        with tf.variable_scope(name):
+            x = self._conv_trans('conv_trans', x, filter_size, in_filter, out_filter,\
+                    self._stride_arr(2),self._out_shape(x, stride, out_filter))
+            x = self._instance_norm('bn',x)
+            return x
+    def _upsample_nearest_neighbor(self,name,x, filter_size,in_filter,out_filter,stride):
+        with tf.variable_scope(name):
+            _, height, width, _ = [i.value for i in x.get_shape()]
+            x = tf.image.resize_nearest_neighbor(x, [stride*height, stride*width])
+            x = self._conv_layer('conv', x, filter_size, in_filter, out_filter, 1)
+            return x
+
+    def _residual(self,name, x,in_filter,out_filter,stride):
+        orig_x = x
+        with tf.variable_scope(name):
+            x = self._conv_layer('sub1',x,3,in_filter,out_filter,stride)
+            x = self._conv_layer('sub1',x,3,in_filter,out_filter,stride,activation=False)
+            with tf.variable_scope('sub_add'):
+                if in_filter != out_filter:
+                    orig_x = tf.nn.avg_pool(orig_x, stride, stride, 'VALID')
+                    orig_x = tf.pad(orig_x, [[0, 0], [0, 0], [0, 0],\
+                                    [(out_filter-in_filter)//2, (out_filter-in_filter)//2]])
+                x += orig_x
+            return x
+
+
     # NOTE: use batch_norm in tf layers
     def _batch_norm(self,name,x):
         if self.mode == 'train':
@@ -140,7 +162,7 @@ class StyleGenerator():
 
     def _instance_norm(self,name,x):
         with tf.variable_scope(name):
-            channels = x.get_shape()[3]
+            channels = x.get_shape()[3].value
             var_shape = [channels]
             mu, sigma_sq = tf.nn.moments(x, [1,2], keep_dims=True)
             shift = tf.Variable(tf.zeros(var_shape),name='shift')
@@ -171,31 +193,12 @@ class StyleGenerator():
             x = tf.reshape(x,out_shape)
             return x
 
-    def _residual(self,x,in_filter,out_filter,stride):
-        orig_x = x
-        with tf.variable_scope('sub1'):
-            x = self._conv('conv1', x, 3, in_filter, out_filter, stride)
-            x = self._instance_norm('bn1',x)
-            x = self._relu(x)
-
-        with tf.variable_scope('sub2'):
-            x = self._conv('conv2', x, 3, in_filter, out_filter, stride)
-            x = self._instance_norm('bn2',x)
-
-        with tf.variable_scope('sub_add'):
-            if in_filter != out_filter:
-                orig_x = tf.nn.avg_pool(orig_x, stride, stride, 'VALID')
-                orig_x = tf.pad(orig_x, [[0, 0], [0, 0], [0, 0],\
-                                [(out_filter-in_filter)//2, (out_filter-in_filter)//2]])
-            x += orig_x
-        return x
-
     # TODO pass relu leakiness argvs
     def _relu(self,x,leakiness=0.0):
         return tf.where(tf.less(x, 0.0), leakiness * x, x, name='leaky_relu' )
  
 
-def build_model(style_path, style_weight, content_weight):
+def build_model(style_path, style_weight, content_weight, lr):
     style_img = utils.load_rgb(style_path)
 
     style_loss = 0.
@@ -247,7 +250,7 @@ def build_model(style_path, style_weight, content_weight):
         style_loss += 1./(4.* M**2 * N**2)* tf.reduce_sum(tf.pow(style_mat[l]-A,2)) * 1./5.
 
     Loss =  content_weight * content_loss + style_weight * style_loss
-    optimizer = tf.train.AdamOptimizer(learning_rate=1).minimize(Loss)
+    optimizer = tf.train.AdamOptimizer(learning_rate=lr).minimize(Loss)
     
     in_image_bufffer = tf.summary.image('input_image',model.x_input, max_outputs=2)
     out_image_buffer = tf.summary.image('output_image',model.out, max_outputs=2)
