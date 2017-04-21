@@ -228,7 +228,8 @@ def build_model(style_path, style_weight, content_weight, lr):
     model.build_graph()
     net = vgg_19.VGG19('./model/vgg19.npy', x=model.out,reuse=True, HEIGHT=256, WIDTH=256)
 
-    content_layers = ['conv4_2']
+    #content_layers = ['conv4_2']
+    content_layers = ['conv3_2']
     #content_layers = ['input']
     content_layer = content_net.model[content_layers[0]]
     N = content_layer.get_shape().as_list()[3]

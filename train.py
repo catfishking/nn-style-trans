@@ -5,6 +5,7 @@ import argparse
 import style_generator
 import utils
 import time
+import math
 
 from os.path import join, isfile
 
@@ -16,25 +17,26 @@ def opt_parse():
     parser.add_argument('--content_dir', default='/home/extra/troutman/tmp3/COCO/train2014_256',\
             help='content images diretory')
     parser.add_argument('--batch_size', default=20, type=int, help='batch size')
+    parser.add_argument('--epoch', default=200, type=int, help='epoch number')
     parser.add_argument('--alpha', default=1., type=float, help='content loss weight')
-    parser.add_argument('--beta', default=1e-3, type=float, help='style loss weight')
-    parser.add_argument('-TB',default=False, action='store_true')
-    parser.add_argument('--logdir',default='./log')
+    parser.add_argument('--beta', default=1e-4, type=float, help='style loss weight')
+    parser.add_argument('--lr', default=1e-2,type=float, help='learning rate')
+    parser.add_argument('-TB',default=False, action='store_true',help='Use tensorboard')
+    parser.add_argument('--logdir',default='./log', help='tensorboard log directory')
 
     args = parser.parse_args()
     return args
 
 def main(args):
-    Loss, optimizer, model, content_net = style_generator.build_model(args.style_image, args.alpha, args.beta)
+    Loss, optimizer, model, content_net = style_generator.build_model(args.style_image, args.alpha, args.beta,args.lr)
+    summary_op = tf.summary.merge_all()
 
     batch_size = args.batch_size
     img_files = [f for f in os.listdir(args.content_dir) if isfile(join(args.content_dir, f))]
-    nb_batch = len(img_files)/batch_size
-
+    nb_batch = int(math.ceil((len(img_files)+0.)/batch_size))
     data_batch = utils.coco_input(args.content_dir, batch_size)
 
     init = tf.global_variables_initializer()
-    summary_op = tf.summary.merge_all()
     
     if args.TB:
         writer = tf.summary.FileWriter(args.logdir, graph=tf.get_default_graph())
@@ -43,7 +45,7 @@ def main(args):
         sess.run(init)
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(coord = coord)
-        for ep in xrange(200):
+        for ep in xrange(args.epoch):
             ep_time = time.time()
             ep_loss = 0.
             for bs in xrange(nb_batch):
@@ -51,14 +53,16 @@ def main(args):
                 _, loss,out,summary = sess.run([optimizer, Loss, model.out,summary_op],\
                         feed_dict={model.x_input:image,content_net.model['input']:image})
                 print bs,loss
+                ep_loss += loss
 
-                if args.TB:
-                    writer.add_summary(summary, ep * nb_batch + bs)
+                if bs % 10 == 0:
+                    if args.TB:
+                        #writer.add_summary(summary, ep * nb_batch + bs)
+                        writer.add_summary(summary)
 
-                if bs % 10 == 9:
                     print 'save'
                     utils.save_rgb('haha.jpg'.format(ep,bs),out[0][np.newaxis,:])
-            print('Epoch:{:4} Loss:{:f} Time:{:f}seconds'.format(ep,ep_loss/nb_batch,time.time()-ep_time))
+            print('Epoch:{:4} Loss:{:.4e} Time:{:4f}seconds'.format(ep,ep_loss/nb_batch,time.time()-ep_time))
 
         coord.request_stop()
         coord.join(threads)
