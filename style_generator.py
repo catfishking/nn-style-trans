@@ -198,7 +198,7 @@ class StyleGenerator():
         return tf.where(tf.less(x, 0.0), leakiness * x, x, name='leaky_relu' )
  
 
-def build_model(style_path, style_weight, content_weight, lr):
+def build_model(style_path, content_weight, style_weight, lr):
     style_img = utils.load_rgb(style_path)
 
     style_loss = 0.
