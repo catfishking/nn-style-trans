@@ -19,7 +19,7 @@ def opt_parse():
     parser.add_argument('--batch_size', default=20, type=int, help='batch size')
     parser.add_argument('--epoch', default=200, type=int, help='epoch number')
     parser.add_argument('--alpha', default=1., type=float, help='content loss weight')
-    parser.add_argument('--beta', default=1e-4, type=float, help='style loss weight')
+    parser.add_argument('--beta', default=5e-4, type=float, help='style loss weight')
     parser.add_argument('--lr', default=1e-2,type=float, help='learning rate')
     parser.add_argument('-TB',default=False, action='store_true',help='Use tensorboard')
     parser.add_argument('--logdir',default='./log', help='tensorboard log directory')
@@ -57,8 +57,7 @@ def main(args):
 
                 if bs % 10 == 0:
                     if args.TB:
-                        #writer.add_summary(summary, ep * nb_batch + bs)
-                        writer.add_summary(summary)
+                        writer.add_summary(summary, ep * nb_batch + bs)
 
                     print 'save'
                     utils.save_rgb('haha.jpg'.format(ep,bs),out[0][np.newaxis,:])
