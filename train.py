@@ -7,7 +7,7 @@ import utils
 import time
 import math
 
-from os.path import join, isfile
+from os.path import join, isfile, basename, splitext
 
 
 def opt_parse():
@@ -23,6 +23,7 @@ def opt_parse():
     parser.add_argument('--lr', default=1e-2,type=float, help='learning rate')
     parser.add_argument('-TB',default=False, action='store_true',help='Use tensorboard')
     parser.add_argument('--logdir',default='./log', help='tensorboard log directory')
+    parser.add_argument('--checkpoint',default='./checkpoint/', help='checkpoint directory')
 
     args = parser.parse_args()
     return args
@@ -41,6 +42,14 @@ def main(args):
     if args.TB:
         writer = tf.summary.FileWriter(args.logdir, graph=tf.get_default_graph())
     print('start training')
+    
+    ### saver settings
+    saver = tf.train.Saver()
+    style_name = splitext(basename(args.style_image))[0]
+    saver_model_path = join(args.checkpoint, style_name) + '/'
+    if not os.path.exists(saver_model_path):
+            os.makedirs(saver_model_path)
+
     with tf.Session() as sess:
         sess.run(init)
         coord = tf.train.Coordinator()
@@ -55,12 +64,14 @@ def main(args):
                 print bs,loss
                 ep_loss += loss
 
-                if bs % 10 == 0:
+                if (bs+1) % 10 == 0:
                     if args.TB:
                         writer.add_summary(summary, ep * nb_batch + bs)
-
-                    print 'save'
+                    print 'save image' # NOTE debug
                     utils.save_rgb('haha.jpg'.format(ep,bs),out[0][np.newaxis,:])
+                if (bs+1) % 1000 == 0:
+                    saver.save(sess, join(saver_model_path, 'model'), global_step=model.global_step)
+
             print('Epoch:{:4} Loss:{:.4e} Time:{:4f}seconds'.format(ep,ep_loss/nb_batch,time.time()-ep_time))
 
         coord.request_stop()

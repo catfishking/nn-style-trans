@@ -50,6 +50,7 @@ class StyleGenerator():
         '''
         self.input_size = input_size
         self.mode = mode
+        self.global_step = tf.Variable(0, dtype=tf.int32, trainable=False, name='global_step')
 
     def build_graph(self):
         self._build_model()
@@ -251,7 +252,7 @@ def build_model(style_path, content_weight, style_weight, lr):
         style_loss += 1./(4.* M**2 * N**2)* tf.reduce_sum(tf.pow(style_mat[l]-A,2)) * 1./5.
 
     Loss =  content_weight * content_loss + style_weight * style_loss
-    optimizer = tf.train.AdamOptimizer(learning_rate=lr).minimize(Loss)
+    optimizer = tf.train.AdamOptimizer(learning_rate=lr).minimize(Loss,global_step=model.global_step)
     
     in_image_bufffer = tf.summary.image('input_image',model.x_input, max_outputs=2)
     out_image_buffer = tf.summary.image('output_image',model.out, max_outputs=2)
