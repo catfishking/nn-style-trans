@@ -43,12 +43,13 @@ from tensorflow.python.client import timeline
 #config.gpu_options.allow_growth=True
 
 class StyleGenerator():
-    def __init__(self,input_size, mode='train'):
+    def __init__(self,input_size, mode='train', x=None):
         '''
             input_size: height or weight
             mode: 'train' or 'test'
         '''
         self.input_size = input_size
+        self.image = x
         self.mode = mode
         self.global_step = tf.Variable(0, dtype=tf.int32, trainable=False, name='global_step')
 
@@ -73,8 +74,10 @@ class StyleGenerator():
     # TODO: use args to pass arch opts
     def _build_model(self):
         with tf.variable_scope('init'):
-            self.x_input = tf.placeholder(tf.float32,[None, self.input_size, self.input_size, 3])
-
+            if self.image == None:
+                self.x_input = tf.placeholder(tf.float32,[None, self.input_size, self.input_size, 3])
+            else:
+                self.x_input = self.image
             #x = self._conv('init_conv', self.x_input, 9, 3, 32,self._stride_arr(1))
             #x = self._instance_norm('bn',x)
 
@@ -199,14 +202,14 @@ class StyleGenerator():
         return tf.where(tf.less(x, 0.0), leakiness * x, x, name='leaky_relu' )
  
 
-def build_model(style_path, content_weight, style_weight, lr):
+def build_model(style_path, content_weight, style_weight, lr, img_size=256):
     style_img = utils.load_rgb(style_path)
 
     style_loss = 0.
     content_loss = 0.
     with tf.Graph().as_default(), tf.Session() as sess:
-        style_image = tf.placeholder(tf.float32, shape=[1,256,256,3], name='style_image')
-        style_net = vgg_19.VGG19('./model/vgg19.npy',x=style_image,reuse=True,HEIGHT=256,WIDTH=256)
+        style_image = tf.placeholder(tf.float32, shape=[1,img_size,img_size,3], name='style_image')
+        style_net = vgg_19.VGG19('./model/vgg19.npy',x=style_image,reuse=True,HEIGHT=img_size,WIDTH=img_size)
         style_layers = ['conv1_1', 'conv2_1', 'conv3_1', 'conv4_1', 'conv5_1']
 
         style_mat = {}
@@ -222,12 +225,12 @@ def build_model(style_path, content_weight, style_weight, lr):
 
             style_mat[l] = G
                 
-    content_image = tf.placeholder(tf.float32, shape=[None, 256, 256, 3], name='content_image')
-    content_net = vgg_19.VGG19('./model/vgg19.npy', x=content_image,reuse=True, HEIGHT=256,WIDTH=256)
+    content_image = tf.placeholder(tf.float32, shape=[None, img_size, img_size, 3], name='content_image')
+    content_net = vgg_19.VGG19('./model/vgg19.npy', x=content_image,reuse=True, HEIGHT=img_size,WIDTH=img_size)
 
-    model = StyleGenerator(256)
+    model = StyleGenerator(img_size)
     model.build_graph()
-    net = vgg_19.VGG19('./model/vgg19.npy', x=model.out,reuse=True, HEIGHT=256, WIDTH=256)
+    net = vgg_19.VGG19('./model/vgg19.npy', x=model.out,reuse=True, HEIGHT=img_size, WIDTH=img_size)
 
     #content_layers = ['conv4_2']
     content_layers = ['conv3_2']

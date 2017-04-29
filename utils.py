@@ -28,7 +28,7 @@ def save_rgb(out_path,array):
     im.save(out_path)
 
 
-def coco_input(path, batch_size = 30):
+def coco_input(path, batch_size = 30, img_size=256):
     img_files = [join(path,f) for f in listdir(path) if isfile(join(path, f))]
     filename_q = tf.train.string_input_producer(img_files,shuffle=True)
 
@@ -36,7 +36,7 @@ def coco_input(path, batch_size = 30):
     key, value = reader.read(filename_q)
     image = tf.image.decode_jpeg(value, channels=3)
     image = tf.image.convert_image_dtype(image, dtype=tf.int8)
-    image = tf.reshape(image, [256,256,3])
+    image = tf.reshape(image, [img_size,img_size,3])
 
     #bbox_begin = (0,0,0)
     #bbox_size = tf.constant((256, 256, 3), dtype=tf.int32)
